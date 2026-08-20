@@ -13,3 +13,30 @@ cdk.out/
 .vscode/
 *.log
 *.pid
+
+# Configuration files with secrets
+cdk.json
+.env.*.local
+
+# AWS credentials
+~/.aws/
+.aws/
+
+# Python/Lambda dependencies (installed packages)
+lambda/boto3/
+lambda/botocore/
+lambda/certifi/
+lambda/charset_normalizer/
+lambda/dateutil/
+lambda/idna/
+lambda/jmespath/
+lambda/s3transfer/
+lambda/six/
+lambda/bin/
+lambda/__pycache__/
+lambda/*.dist-info/
+lambda/*.egg-info/
+lambda/__pycache__/
+*.pyc
+*.pyo
+__pycache__/

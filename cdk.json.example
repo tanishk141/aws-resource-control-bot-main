@@ -1,0 +1,22 @@
+{
+  "app": "ts-node bin/app.ts",
+  "context": {
+    "telegramBotToken": "YOUR_BOT_TOKEN_HERE",
+    "allowedUserIds": "YOUR_USER_ID_HERE",
+    "environmentMap": {
+      "prod": {
+        "ecs_cluster": "your-ecs-cluster-name",
+        "rds_instances": "your-rds-instance-id"
+      },
+      "prod-1": {
+        "ecs_cluster": "your-ecs-cluster-1",
+        "rds_instances": "your-rds-instance-1"
+      }
+    },
+    "accessPolicy": {
+      "YOUR_USER_ID": {
+        "envs": ["prod"]
+      }
+    }
+  }
+}
