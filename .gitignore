@@ -1,0 +1,15 @@
+*.js
+*.d.ts
+node_modules/
+dist/
+cdk.out/
+.env
+.env.local
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.pid

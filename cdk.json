@@ -1,0 +1,26 @@
+{
+  "app": "ts-node bin/app.ts",
+  "context": {
+    "telegramBotToken": "8892548119:AAGUKu48ctAbxiWi0tTlzTTqQvoaHXLoT8E",
+    "allowedUserIds": "155604932",
+    "environmentMap": {
+      "prod": {
+        "ecs_cluster": "telegram-bot-cluster",
+        "rds_instances": "database-1"
+      },
+      "prod-1": {
+        "ecs_cluster": "telegram-bot-cluster-1",
+        "rds_instances": "database-1"
+      },
+      "prod-2": {
+        "ecs_cluster": "telegram-bot-cluster-2",
+        "rds_instances": "database-2"
+      }
+    },
+    "accessPolicy": {
+      "155604932": {
+        "envs": ["prod"]
+      }
+    }
+  }
+}

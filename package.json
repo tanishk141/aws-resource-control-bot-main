@@ -1,0 +1,23 @@
+{
+  "name": "telegram-resource-control-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for controlling AWS ECS clusters and RDS instances",
+  "bin": {"app": "bin/app.ts"},
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "diff": "cdk diff"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "aws-cdk": "^2.170.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.4.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.3.0"
+  }
+}
