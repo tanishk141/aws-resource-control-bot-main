@@ -5,7 +5,7 @@
 Your bot is now deployed with a simplified interface showing only the essential controls for your production environment.
 
 ### Quick Reference
-- **Bot Token**: `8892548119:AAGUKu48ctAbxiWi0tTlzTTqQvoaHXLoT8E`
+- **Bot Token**: `8892xxxxx:xxxxvfdffddTlzTTYYYYYYT8E`
 - **Telegram User ID**: `155604932`
 - **Authorized User**: ✅ Configured
 - **Environment**: `prod` (single production environment)
