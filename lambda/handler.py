@@ -33,6 +33,7 @@ logger.info("=============================")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 REGION = os.environ.get("AWS_REGION_NAME", os.environ.get("AWS_REGION", "ap-south-1"))
 AUDIT_TABLE = os.environ.get("AUDIT_TABLE", "TelegramResourceControlBotAudit")
+NOTIFICATION_CHAT_ID = os.environ.get("NOTIFICATION_CHAT_ID", "")
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "resource_control_bot")
 LAMBDA_ARN = ""
 
@@ -298,7 +299,122 @@ def describe_rds_instance(instance_id: str) -> Dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+# ══════════════════════════════════════════════════════════════
+#  RDS 7-Day Auto-Sleep Guard (EventBridge Driven)
+# ══════════════════════════════════════════════════════════════
+
+def is_db_managed(db_instance_id: str) -> Optional[str]:
+    """Check if the given RDS instance belongs to any environment in ENVIRONMENT_MAP."""
+    for env_name, config in ENVIRONMENT_MAP.items():
+        rds_target = config.get("rds_instances", "")
+        if isinstance(rds_target, list) and db_instance_id in rds_target:
+            return env_name
+        elif isinstance(rds_target, str):
+            targets = [x.strip() for x in rds_target.split(",") if x.strip()]
+            if db_instance_id == rds_target or db_instance_id in targets:
+                return env_name
+    return None
+
+def set_autostart_flag(db_instance_id: str) -> None:
+    """Record that AWS forced a 7-day auto-start on this DB instance."""
+    table = get_audit_table()
+    if not table:
+        logger.warning("Audit table not available to set autostart flag for %s", db_instance_id)
+        return
+    try:
+        table.put_item(Item={
+            "pk": f"AUTOSTART#{db_instance_id}",
+            "sk": "FLAG",
+            "db_instance_id": db_instance_id,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "ttl": int(time.time()) + 86400,  # 24-hour auto cleanup
+        })
+        logger.info("Auto-start flag set in DynamoDB for instance: %s", db_instance_id)
+    except Exception as e:
+        logger.error("Failed to set autostart flag for %s: %s", db_instance_id, str(e))
+
+def pop_autostart_flag(db_instance_id: str) -> bool:
+    """Check and atomically clear the autostart flag. Returns True if flag was present."""
+    table = get_audit_table()
+    if not table:
+        return False
+    try:
+        resp = table.get_item(Key={"pk": f"AUTOSTART#{db_instance_id}", "sk": "FLAG"})
+        if "Item" in resp:
+            table.delete_item(Key={"pk": f"AUTOSTART#{db_instance_id}", "sk": "FLAG"})
+            logger.info("Cleared autostart flag for instance: %s", db_instance_id)
+            return True
+    except Exception as e:
+        logger.error("Failed to pop autostart flag for %s: %s", db_instance_id, str(e))
+    return False
+
+def clear_autostart_flag(db_instance_id: str) -> None:
+    """Explicitly delete the autostart flag (e.g., when a user manually starts)."""
+    table = get_audit_table()
+    if not table:
+        return
+    try:
+        table.delete_item(Key={"pk": f"AUTOSTART#{db_instance_id}", "sk": "FLAG"})
+    except Exception as e:
+        logger.warning("Failed to clear autostart flag for %s: %s", db_instance_id, str(e))
+
+def handle_rds_eventbridge_event(event: dict) -> dict:
+    """
+    Handles RDS lifecycle events from EventBridge:
+    - RDS-EVENT-0154: AWS forced auto-start after 7-day stopped limit -> Set flag.
+    - RDS-EVENT-0088: DB is available -> If flag is present, stop DB & alert Telegram.
+    """
+    detail = event.get("detail", {})
+    event_id = detail.get("EventID", "")
+    db_id = detail.get("SourceIdentifier", "")
+    message = detail.get("Message", "")
+
+    logger.info("Received RDS EventBridge event: ID=%s, DB=%s, Message=%s", event_id, db_id, message)
+
+    if not db_id:
+        logger.warning("Event missing SourceIdentifier: %s", event)
+        return {"action": "MISSING_IDENTIFIER"}
+
+    env_name = is_db_managed(db_id)
+    if not env_name:
+        logger.info("RDS instance '%s' is not managed in ENVIRONMENT_MAP. Skipping.", db_id)
+        return {"action": "SKIPPED_UNMANAGED", "db_id": db_id}
+
+    # Step 1: AWS forced 7-day auto-start
+    if event_id == "RDS-EVENT-0154":
+        logger.info("Forced 7-day auto-start detected for '%s' (env: %s). Setting flag.", db_id, env_name)
+        set_autostart_flag(db_id)
+        return {"action": "FLAG_SET", "db_id": db_id, "env": env_name}
+
+    # Step 2: Instance reached available state
+    if event_id == "RDS-EVENT-0088" or "started" in message.lower():
+        if pop_autostart_flag(db_id):
+            logger.info("Auto-start flag found for '%s'. Stopping instance to preserve stopped state...", db_id)
+            stop_rds_instance(db_id)
+            log_audit("SYSTEM", "AutoSleepGuard", "stop", env_name, db_id, "success", "Auto-stopped after AWS 7-day forced start")
+
+            # Notify Telegram
+            target_chat = NOTIFICATION_CHAT_ID or (ALLOWED_USER_IDS[0] if ALLOWED_USER_IDS else None)
+            if target_chat:
+                try:
+                    send_message(
+                        int(target_chat),
+                        f"🛡️ <b>Auto-Sleep Guard Activated</b>\n\n"
+                        f"AWS automatically started database <code>{db_id}</code> (7-day stopped limit reached).\n\n"
+                        f"Since no client start was initiated, the bot has <b>stopped it again</b> to prevent unwanted charges."
+                    )
+                except Exception as notify_err:
+                    logger.error("Failed to send Telegram alert for auto-stop: %s", str(notify_err))
+
+            return {"action": "RESTOPPED_AND_NOTIFIED", "db_id": db_id, "env": env_name}
+        else:
+            logger.info("RDS instance '%s' started normally (manual client start). No action needed.", db_id)
+            return {"action": "MANUAL_START_IGNORED", "db_id": db_id, "env": env_name}
+
+    return {"action": "IGNORED_EVENT_TYPE", "event_id": event_id}
+
 def orchestrate_start(ecs_cluster: str, rds_instance: str) -> tuple:
+    clear_autostart_flag(rds_instance)
     results = {"rds_start": None, "rds_wait": None, "ecs_start": None, "ecs_wait": None}
     
     results["rds_start"] = start_rds_instance(rds_instance)
@@ -553,6 +669,12 @@ def lambda_handler(event, context):
     ok_response = {"statusCode": 200, "body": json.dumps({"ok": True})}
     
     try:
+        # ── Route AWS EventBridge RDS Lifecycle Events ───────────
+        if event.get("source") == "aws.rds":
+            result = handle_rds_eventbridge_event(event)
+            return {"statusCode": 200, "body": json.dumps(result)}
+
+        # ── Telegram Webhook Security Check ─────────────────────
         if WEBHOOK_SECRET and event.get("headers", {}).get("x-telegram-bot-api-secret-token", "") != WEBHOOK_SECRET:
             return ok_response
         
